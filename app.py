@@ -5,9 +5,9 @@ import re
 def converter_hora_decimal(h_str):
     if not h_str: return 0.0
     try:
-        # Detecta se é negativo analisando o símbolo de menos
+        # Verifica se há sinal de menos para saldo negativo
         multiplicador = -1 if '-' in h_str else 1
-        # Mantém apenas números e os dois pontos
+        # Mantém apenas números e o sinal de dois pontos
         limpo = re.sub(r'[^\d:]', '', h_str)
         if ':' not in limpo: return 0.0
         h, m = map(int, limpo.split(':'))
@@ -34,16 +34,13 @@ if arquivo:
         for page in pdf.pages:
             texto_total += page.extract_text() + "\n"
 
-    # --- NOVA LÓGICA DE CAPTURA (O SEGREDO) ---
-    # 1. Primeiro, tentamos achar o valor dentro do parênteses da linha que contém "Saldo"
-    # 2. Se falhar, pegamos o último valor entre parênteses do documento todo (padrão do Pontotel)
-    padrão_saldo_linha = re.findall(r"Saldo.*?\((\s*[-\d:]+\s*)\)", texto_total, re.DOTALL | re.IGNORECASE)
-    padrão_qualquer_parenteses = re.findall(r"\((\s*[-\d:]+\s*)\)", texto_total)
-
-    if padrão_saldo_linha:
-        saldo_exibicao = padrão_saldo_linha[-1].strip()
-    elif padrão_qualquer_parenteses:
-        saldo_exibicao = padrão_qualquer_parenteses[-1].strip()
+    # --- NOVA LÓGICA INFALÍVEL ---
+    # Captura todos os valores que aparecem entre parênteses (ex: (04:22), (-00:26))
+    todos_parenteses = re.findall(r"\(([-\d:]+)\)", texto_total)
+    
+    if todos_parenteses:
+        # No Pontotel, o ÚLTIMO valor entre parênteses do PDF é sempre o Saldo Acumulado
+        saldo_exibicao = todos_parenteses[-1].strip()
     else:
         saldo_exibicao = "00:00"
     
@@ -62,7 +59,7 @@ if arquivo:
     
     with c1:
         st.metric(
-            label="Saldo Identificado", 
+            label="Saldo Identificado (PDF)", 
             value=saldo_exibicao, 
             delta="Banco de Horas", 
             delta_color="normal" if saldo_decimal >= 0 else "inverse"
@@ -75,8 +72,8 @@ if arquivo:
 
     with c3:
         total_com_dsr = valor_final + dsr
-        st.metric("Total c/ DSR", f"R$ {total_com_dsr:.2f}")
-        st.caption("Base: Adicional 60% + Reflexo DSR")
+        st.metric("Total Estimado c/ DSR", f"R$ {total_com_dsr:.2f}")
+        st.caption("Regra: Adicional 60% + Reflexo DSR")
 
-    if st.checkbox("Depuração: Ver texto bruto"):
+    if st.checkbox("Ver texto bruto do PDF (Depuração)"):
         st.text(texto_total)
