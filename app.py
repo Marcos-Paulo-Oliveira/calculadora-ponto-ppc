@@ -15,10 +15,17 @@ def converter_hora_decimal(h_str):
 st.set_page_config(page_title="Calculadora Ponto PP&C", page_icon="📊", layout="wide")
 st.title("📊 Calculadora de Banco de Horas Geral - PP&C")
 
-# --- NOVO: ENTRADA DE DADOS DO USUÁRIO ---
+# --- AJUSTE NO CAMPO DE SALÁRIO (Permite digitar livremente) ---
 st.sidebar.header("Configurações Financeiras")
-salario_informado = st.sidebar.number_input("Informe seu Salário Bruto (R$):", min_value=0.0, value=2605.00, step=100.0)
-valor_hora_seca = salario_informado / 220
+salario_texto = st.sidebar.text_input("Informe seu Salário Bruto (Ex: 2605.00):", value="2605.00")
+
+try:
+    salario_informado = float(salario_texto.replace(',', '.'))
+except:
+    st.sidebar.error("Por favor, insira um número válido para o salário.")
+    salario_informado = 0.0
+
+valor_hora_seca = salario_informado / 220 if salario_informado > 0 else 0.0
 
 arquivo = st.file_uploader("Suba seu Espelho de Ponto PDF (Pontotel)", type="pdf")
 
@@ -28,18 +35,24 @@ if arquivo:
         for page in pdf.pages:
             texto_total += page.extract_text() + "\n"
 
-    # --- BUSCA DO SALDO ACUMULADO ---
-    match_saldo = re.findall(r"Saldo\s+[-\d:]+\s+\(([-\d:]+)\)", texto_total)
-    saldo_exibicao = match_saldo[-1].strip() if match_saldo else "00:00"
+    # --- BUSCA DE SALDO MELHORADA (Ignora espaços e quebras de linha) ---
+    # Busca a palavra Saldo e tenta capturar o valor final entre parênteses
+    match_saldo = re.findall(r"Saldo.*?\(?\s*([-\d:]+)\s*\)?", texto_total, re.IGNORECASE | re.DOTALL)
+    
+    # Pegamos o último valor que se parece com um saldo (HH:MM) no final do PDF
+    if match_saldo:
+        saldo_exibicao = match_saldo[-1].strip()
+    else:
+        saldo_exibicao = "00:00"
+    
     saldo_decimal = converter_hora_decimal(saldo_exibicao)
 
-    # --- CÁLCULO FINANCEIRO BASEADO NO SALÁRIO INFORMADO ---
+    # --- CÁLCULO FINANCEIRO ---
     valor_final = 0.0
     dsr = 0.0
     if saldo_decimal > 0:
-        # Mantendo a regra de 60% do acordo coletivo
         valor_final = saldo_decimal * valor_hora_seca * 1.60
-        dsr = valor_final * 0.25 # Reflexo de DSR médio
+        dsr = valor_final * 0.25
 
     # --- INTERFACE ---
     st.divider()
@@ -47,20 +60,20 @@ if arquivo:
     
     with c1:
         st.metric(
-            label="Seu Saldo Final (PDF)", 
+            label="Saldo Identificado no PDF", 
             value=saldo_exibicao, 
             delta="Horas Acumuladas", 
             delta_color="normal" if saldo_decimal >= 0 else "inverse"
         )
 
     with c2:
-        st.subheader("💰 Estimativa Personalizada")
-        st.write(f"**Valor da sua hora:** R$ {valor_hora_seca:.2f}")
+        st.subheader("💰 Estimativa")
+        st.write(f"**Valor da Hora:** R$ {valor_hora_seca:.2f}")
         st.write(f"**Bruto Extras:** R$ {valor_final:.2f}")
-        st.write(f"**DSR Estimado:** R$ {dsr:.2f}")
 
     with c3:
         total_receber = valor_final + dsr
-        st.metric("Total Estimado a Receber", f"R$ {total_receber:.2f}")
+        st.metric("Total c/ DSR", f"R$ {total_receber:.2f}")
         
-    st.info(f"Cálculo realizado com base no salário de R$ {salario_informado:,.2f} informado lateralmente.")
+    if st.checkbox("Visualizar texto lido (Para conferência)"):
+        st.text(texto_total)
