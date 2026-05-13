@@ -1,13 +1,15 @@
 import streamlit as st
 import pdfplumber
 import re
-from datetime import datetime
 
 def converter_hora_decimal(h_str):
-    if not h_str or ':' not in h_str: return 0.0
+    if not h_str: return 0.0
     try:
+        # Detecta se é negativo analisando o símbolo de menos
         multiplicador = -1 if '-' in h_str else 1
+        # Mantém apenas números e os dois pontos
         limpo = re.sub(r'[^\d:]', '', h_str)
+        if ':' not in limpo: return 0.0
         h, m = map(int, limpo.split(':'))
         return (h + (m / 60)) * multiplicador
     except: return 0.0
@@ -15,19 +17,16 @@ def converter_hora_decimal(h_str):
 st.set_page_config(page_title="Calculadora Ponto PP&C", page_icon="📊", layout="wide")
 st.title("📊 Calculadora de Banco de Horas Geral - PP&C")
 
-# --- AJUSTE NO CAMPO DE SALÁRIO (Permite digitar livremente) ---
-st.sidebar.header("Configurações Financeiras")
-salario_texto = st.sidebar.text_input("Informe seu Salário Bruto (Ex: 2605.00):", value="2605.00")
-
+# --- BARRA LATERAL ---
+st.sidebar.header("Configurações")
+salario_texto = st.sidebar.text_input("Salário Bruto (R$):", value="2605.00")
 try:
     salario_informado = float(salario_texto.replace(',', '.'))
 except:
-    st.sidebar.error("Por favor, insira um número válido para o salário.")
     salario_informado = 0.0
-
 valor_hora_seca = salario_informado / 220 if salario_informado > 0 else 0.0
 
-arquivo = st.file_uploader("Suba seu Espelho de Ponto PDF (Pontotel)", type="pdf")
+arquivo = st.file_uploader("Suba seu Espelho de Ponto PDF", type="pdf")
 
 if arquivo:
     with pdfplumber.open(arquivo) as pdf:
@@ -35,13 +34,16 @@ if arquivo:
         for page in pdf.pages:
             texto_total += page.extract_text() + "\n"
 
-    # --- BUSCA DE SALDO MELHORADA (Ignora espaços e quebras de linha) ---
-    # Busca a palavra Saldo e tenta capturar o valor final entre parênteses
-    match_saldo = re.findall(r"Saldo.*?\(?\s*([-\d:]+)\s*\)?", texto_total, re.IGNORECASE | re.DOTALL)
-    
-    # Pegamos o último valor que se parece com um saldo (HH:MM) no final do PDF
-    if match_saldo:
-        saldo_exibicao = match_saldo[-1].strip()
+    # --- NOVA LÓGICA DE CAPTURA (O SEGREDO) ---
+    # 1. Primeiro, tentamos achar o valor dentro do parênteses da linha que contém "Saldo"
+    # 2. Se falhar, pegamos o último valor entre parênteses do documento todo (padrão do Pontotel)
+    padrão_saldo_linha = re.findall(r"Saldo.*?\((\s*[-\d:]+\s*)\)", texto_total, re.DOTALL | re.IGNORECASE)
+    padrão_qualquer_parenteses = re.findall(r"\((\s*[-\d:]+\s*)\)", texto_total)
+
+    if padrão_saldo_linha:
+        saldo_exibicao = padrão_saldo_linha[-1].strip()
+    elif padrão_qualquer_parenteses:
+        saldo_exibicao = padrão_qualquer_parenteses[-1].strip()
     else:
         saldo_exibicao = "00:00"
     
@@ -60,20 +62,21 @@ if arquivo:
     
     with c1:
         st.metric(
-            label="Saldo Identificado no PDF", 
+            label="Saldo Identificado", 
             value=saldo_exibicao, 
-            delta="Horas Acumuladas", 
+            delta="Banco de Horas", 
             delta_color="normal" if saldo_decimal >= 0 else "inverse"
         )
 
     with c2:
-        st.subheader("💰 Estimativa")
+        st.subheader("💰 Cálculo")
         st.write(f"**Valor da Hora:** R$ {valor_hora_seca:.2f}")
-        st.write(f"**Bruto Extras:** R$ {valor_final:.2f}")
+        st.write(f"**Total Extras (Bruto):** R$ {valor_final:.2f}")
 
     with c3:
-        total_receber = valor_final + dsr
-        st.metric("Total c/ DSR", f"R$ {total_receber:.2f}")
-        
-    if st.checkbox("Visualizar texto lido (Para conferência)"):
+        total_com_dsr = valor_final + dsr
+        st.metric("Total c/ DSR", f"R$ {total_com_dsr:.2f}")
+        st.caption("Base: Adicional 60% + Reflexo DSR")
+
+    if st.checkbox("Depuração: Ver texto bruto"):
         st.text(texto_total)
