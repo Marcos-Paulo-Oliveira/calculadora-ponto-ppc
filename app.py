@@ -11,9 +11,11 @@ DATA_INICIO_BANCO = datetime(2026, 4, 1)
 def converter_hora_decimal(h_str):
     if not h_str or ':' not in h_str: return 0.0
     try:
+        # Detecta se é negativo
         multiplicador = -1 if '-' in h_str else 1
-        h_str = h_str.replace('-', '').replace('(', '').replace(')', '')
-        h, m = map(int, h_str.strip().split(':'))
+        # Remove caracteres indesejados
+        limpo = re.sub(r'[^\d:]', '', h_str)
+        h, m = map(int, limpo.split(':'))
         return (h + (m / 60)) * multiplicador
     except: return 0.0
 
@@ -28,9 +30,15 @@ if arquivo:
         for page in pdf.pages:
             texto_total += page.extract_text() + "\n"
 
-    # --- BUSCA PELO SALDO ACUMULADO NO TEXTO ---
-    match_saldo = re.findall(r"Saldo\s+[-\d:]+\s+\(([-\d:]+)\)", texto_total)
-    saldo_acumulado_str = match_saldo[-1] if match_saldo else "00:00"
+    # --- NOVA BUSCA MAIS ROBUSTA ---
+    # Esta regex busca a palavra Saldo e pega o que está dentro do último parênteses da linha
+    match_saldo = re.findall(r"Saldo.*?\((\s*[-\d:]+\s*)\)", texto_total, re.DOTALL)
+    
+    if match_saldo:
+        saldo_acumulado_str = match_saldo[-1].strip() # Pega o último saldo do documento
+    else:
+        saldo_acumulado_str = "00:00"
+    
     saldo_decimal = converter_hora_decimal(saldo_acumulado_str)
 
     # --- CÁLCULO FINANCEIRO ---
@@ -40,36 +48,33 @@ if arquivo:
         valor_final = saldo_decimal * VALOR_HORA_SECA * 1.60
         dsr = valor_final * 0.25
 
-    # --- INTERFACE ATUALIZADA ---
+    # --- INTERFACE ---
     st.divider()
-    
-    # Criamos 3 colunas para distribuir melhor as informações
     c1, c2, c3 = st.columns(3)
     
     with c1:
-        # Exibe o saldo exatamente como no PDF (-00:26)
-        # O delta_color="normal" faz ficar vermelho se for negativo e verde se positivo
         st.metric(
-            label="Saldo Atual do Banco", 
+            label="Saldo Atual Identificado", 
             value=saldo_acumulado_str, 
-            delta="Horas Acumuladas", 
+            delta="Horas no Banco", 
             delta_color="normal" if saldo_decimal >= 0 else "inverse"
         )
 
     with c2:
-        st.subheader("📈 Status")
         if saldo_decimal < 0:
-            st.error("Saldo Negativo")
-            st.info("Você precisa compensar essas horas.")
-        else:
-            st.success("Saldo Positivo")
+            st.error("📉 Saldo Devedor")
+            st.info("Você possui horas negativas a compensar.")
+        elif saldo_decimal > 0:
+            st.success("📈 Saldo Credor")
             st.balloons()
+        else:
+            st.warning("⚖️ Saldo Zerado")
 
     with c3:
-        st.subheader("💰 Estimativa")
-        st.metric("Valor Bruto + DSR", f"R$ {valor_final + dsr:.2f}")
-        st.caption("Cálculo para o fechamento do quadrimestre.")
+        st.subheader("💰 Projeção Financeira")
+        st.write(f"**Valor das Extras:** R$ {valor_final:.2f}")
+        st.write(f"**DSR Estimado:** R$ {dsr:.2f}")
+        st.success(f"### Total: R$ {valor_final + dsr:.2f}")
 
-    if st.checkbox("Ver log de processamento"):
-        st.write(f"Data de corte: {DATA_INICIO_BANCO.strftime('%d/%m/%Y')}")
-        st.write(f"Saldo bruto identificado: {saldo_acumulado_str}")
+    if st.checkbox("Depuração: Ver texto bruto do PDF"):
+        st.text(texto_total)
