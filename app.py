@@ -1,39 +1,74 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
+import re
 
-# Dados fixos do seu contrato PP&C
+# Configurações do seu contrato PP&C
 SALARIO_BASE = 2605.00
 VALOR_HORA_SECA = SALARIO_BASE / 220
 
-st.set_page_config(page_title="Calculadora Ponto Marcos", layout="wide")
-st.title("📊 Calculadora de Banco de Horas PP&C")
+def converter_para_decimal(tempo_str):
+    if not tempo_str or ':' not in str(tempo_str): return 0.0
+    try:
+        h, m = map(int, str(tempo_str).strip().split(':'))
+        return h + (m / 60)
+    except: return 0.0
 
-st.markdown(f"""
-**Configurações Atuais:**
-- Salário Base: R$ {SALARIO_BASE:.2f}
-- Valor da Hora: R$ {VALOR_HORA_SECA:.2f}
-""")
+st.set_page_config(page_title="Calculadora Auditoria PP&C", layout="wide")
+st.title("📊 Analisador de Banco de Horas (Regra Escalonada)")
 
-file = st.file_uploader("Suba seu Espelho de Ponto (PDF)", type="pdf")
+arquivo = st.file_uploader("Suba seu Espelho de Ponto (PDF)", type="pdf")
 
-if file:
-    with pdfplumber.open(file) as pdf:
-        # Lógica de extração de dados do seu PDF
-        st.success("Arquivo carregado! Processando horas...")
+if arquivo:
+    with pdfplumber.open(arquivo) as pdf:
+        dados_completos = []
+        for page in pdf.pages:
+            table = page.extract_table()
+            if table:
+                dados_completos.extend(table[1:]) # Pula o cabeçalho
         
-        # Exemplo baseado no seu último saldo de 39:15 (39.25h)
-        horas_no_banco = 39.25 
+        # Criando DataFrame com as colunas do Pontotel
+        df = pd.DataFrame(dados_completos)
         
-        # Cálculo seguindo a Cláusula 2.3 do seu contrato
-        # (Simulando que as horas estão dentro do limite de 2h/dia)
-        valor_bruto = horas_no_banco * VALOR_HORA_SECA * 1.60 
-        dsr = valor_bruto * 0.25 # Média de DSR
+        # Identificando as horas na coluna de 'Apontamento' (Geralmente a 7ª ou 8ª coluna)
+        # Vamos buscar por linhas que contenham "H. Extra 60%"
+        total_60 = 0.0
+        total_80 = 0.0
+        total_100 = 0.0
+
+        for row in dados_completos:
+            linha_texto = " ".join([str(item) for item in row if item])
+            
+            # Busca valores de horas (ex: 01:30) próximos aos termos de extra
+            matches = re.findall(r'(\d{2}:\d{2})', linha_texto)
+            
+            if "H. Extra 60%" in linha_texto and matches:
+                total_60 += converter_para_decimal(matches[0])
+            elif "H. Extra 80%" in linha_texto and matches:
+                total_80 += converter_para_decimal(matches[0])
+            elif "100%" in linha_texto and matches:
+                total_100 += converter_para_decimal(matches[0])
+
+        # Cálculos Financeiros
+        valor_60 = total_60 * VALOR_HORA_SECA * 1.60
+        valor_80 = total_80 * VALOR_HORA_SECA * 1.80
+        valor_100 = total_100 * VALOR_HORA_SECA * 2.00
+        
+        bruto_total = valor_60 + valor_80 + valor_100
+        dsr = bruto_total * 0.25 # Reflexo médio de DSR conforme sua folha
+
+        st.subheader("Análise Detalhada do Período")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Horas 60% (Até 2h/dia)", f"{total_60:.2f}h")
+        c2.metric("Horas 80% (>2h/dia)", f"{total_80:.2f}h")
+        c3.metric("Horas 100% (FDS/Fer)", f"{total_100:.2f}h")
+        c4.metric("Saldo Total Horas", f"{total_60 + total_80 + total_100:.2f}h")
 
         st.divider()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Saldo de Horas", f"{horas_no_banco}h")
-        c2.metric("Valor Bruto Horas", f"R$ {valor_bruto:.2f}")
-        c3.metric("Total c/ DSR", f"R$ {valor_bruto + dsr:.2f}")
+        st.subheader("Estimativa Financeira para o Fechamento")
         
-        st.caption("Nota: O cálculo final depende da distribuição das horas (60%, 80% ou 100%) em cada dia trabalhado.")
+        res_c1, res_c2 = st.columns(2)
+        res_c1.info(f"**Valor Bruto das Horas:** R$ {bruto_total:.2f}")
+        res_c2.success(f"**Total com DSR (Estimado):** R$ {bruto_total + dsr:.2f}")
+        
+        st.caption(f"Cálculos baseados no seu salário de R$ {SALARIO_BASE:.2f} e nas regras do Acordo Quadrimestral assinado em Abril/2026.")
